@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<!--
+=====================================================================
+ EPL FOREST RESTORATION MONITORING DASHBOARD  (easy-to-read version)
+=====================================================================
+ This is ONE file made of three parts:
+
+   1. HTML  -> the structure (what is on the page)
+   2. CSS   -> the style     (colors, sizes, layout)
+   3. JavaScript -> the brain (loads data, filters, draws charts + map)
+
+ Files needed in the same folder:
+   - dashboard.html (this file)
+   - data.csv       (your site data)
+   - SWS and PPWS Shapefile_updated.geojson (boundary)
+
+ Search for the big "PART" and "SECTION" titles to find things quickly.
+=====================================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EPL Forest Restoration Monitoring Dashboard</title>
+
+  <!-- Leaflet = the free map library. Loaded from the internet (CDN). -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+
+  <!-- =============================================================
+       PART 1: CSS  (how everything looks)
+       ============================================================= -->
+  <style>
+
+    /* ---------- 1.1 Colors (change them here, used everywhere) ---------- */
+    :root {
+      --bg:   #f3f5f2;   /* page background        */
+      --card: #ffffff;   /* card background        */
+      --bd:   #dfe5df;   /* border color           */
+      --tx:   #26332b;   /* main text color        */
+      --mut:  #6b7a70;   /* muted (gray) text      */
+      --in:   #f7f9f7;   /* input box background   */
+      --ac:   #0b6b3a;   /* accent (green)         */
+      --ac2:  #e9f3ec;   /* light accent           */
+    }
+
+    /* ---------- 1.2 Page basics ---------- */
+    * {
+      box-sizing: border-box;   /* padding is included in width/height */
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--tx);
+      font: 13px/1.45 "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+    }
+
+    /* ---------- 1.3 Main layout: left sidebar + right content ---------- */
+    #app {
+      display: grid;
+      grid-template-columns: 270px 1fr;   /* sidebar 270px, content = rest */
+      min-height: 100vh;
+    }
+    aside {                               /* the left sidebar */
+      background: #fff;
+      border-right: 1px solid var(--bd);
+      padding: 18px 16px;
+      overflow: auto;
+      height: 100vh;
+      position: sticky;                   /* stays visible when scrolling */
+      top: 0;
+    }
+    main {
+      min-width: 0;
+    }
+
+    /* ---------- 1.4 Top title bar ---------- */
+    .top {
+      background: #fff;
+      border-bottom: 1px solid var(--bd);
+      border-top: 5px solid var(--ac);
+      padding: 16px 26px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .top .t { font-size: 1.35rem; font-weight: 700; letter-spacing: .01em; }
+    .top .s { color: var(--mut); font-size: .8rem; margin-top: 2px; }
+    .top .d { text-align: right; color: var(--mut); font-size: .8rem; }
+
+    .body { padding: 16px 26px 24px; }
+
+    /* ---------- 1.5 Sidebar items ---------- */
+    h3 {
+      margin: 0 0 8px;
+      font-size: .72rem;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+      color: var(--mut);
+    }
+    .sec { margin-bottom: 20px; }
+
+    /* Buttons, dropdowns and number boxes share the same look */
+    button, select, input[type=number] {
+      background: var(--in);
+      color: var(--tx);
+      border: 1px solid var(--bd);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font: inherit;
+      width: 100%;
+    }
+    button {
+      cursor: pointer;
+      width: auto;
+      color: var(--ac);
+      font-weight: 600;
+    }
+    button:hover { background: var(--ac2); }
+
+    label.f {                             /* small gray label above a box */
+      display: block;
+      margin: 8px 0 3px;
+      color: var(--mut);
+      font-size: .75rem;
+    }
+
+    /* Filter groups (click to open/close) */
+    details {
+      border: 1px solid var(--bd);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      background: var(--in);
+    }
+    summary { padding: 7px 10px; cursor: pointer; font-weight: 600; }
+    .opts {                               /* list of checkboxes */
+      max-height: 160px;
+      overflow: auto;
+      padding: 2px 10px 8px;
+    }
+    .opts label {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 1px 0;
+    }
+    .two {                                /* two boxes side by side (Min / Max) */
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    /* Green pill showing the active filters */
+    .chip {
+      display: inline-block;
+      background: var(--ac2);
+      color: var(--ac);
+      border-radius: 12px;
+      padding: 3px 11px;
+      margin: 0 6px 10px 0;
+      font-size: .74rem;
+      font-weight: 600;
+    }
+
+    /* ---------- 1.6 Dashboard grids ---------- */
+    .g3 {                                 /* top row: left | MAP | right */
+      display: grid;
+      grid-template-columns: 1fr 2.6fr 1fr;
+      gap: 14px;
+    }
+    .g2 {                                 /* bottom row: two cards */
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 14px;
+    }
+
+    /* Card = white box with a title */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--bd);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      min-width: 0;
+      box-shadow: 0 1px 2px rgba(20, 40, 25, .05);
+    }
+    .ct { font-weight: 700; margin-bottom: 10px; font-size: .9rem; }
+
+    /* ---------- 1.7 Horizontal bar charts ---------- */
+    .hb { margin-bottom: 9px; }
+    .hl {                                 /* label on left, value on right */
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: .78rem;
+    }
+    .hl span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ht { height: 8px; background: #e7ece8; border-radius: 4px; margin-top: 3px; }  /* gray track */
+    .ht div { height: 100%; border-radius: 4px; }                                    /* colored bar */
+
+    /* ---------- 1.8 Vertical bar chart (trees by zone) ---------- */
+    .vb { display: flex; align-items: flex-end; gap: 10px; height: 220px; }
+    .vc {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+    .vbar { width: 65%; border-radius: 3px 3px 0 0; }
+    .vv { font-size: .72rem; margin-bottom: 2px; font-weight: 600; }
+    .vl {
+      font-size: .68rem;
+      color: var(--mut);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-top: 5px;
+    }
+
+    /* ---------- 1.9 Donut legend ---------- */
+    .leg {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      font-size: .72rem;
+      color: var(--mut);
+      justify-content: center;
+      margin-top: 4px;
+    }
+    .leg i {                              /* the little colored dot */
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+
+    /* ---------- 1.10 "Largest Sites" rows ---------- */
+    .row {
+      background: var(--in);
+      border-left: 4px solid var(--ac);
+      border-radius: 5px;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+    }
+    .row .m { font-size: .72rem; color: var(--mut); }
+
+    /* ---------- 1.11 Summary table ---------- */
+    .tw { max-height: 330px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    th, td { padding: 6px 8px; border-bottom: 1px solid var(--bd); text-align: left; }
+    th {
+      position: sticky;                   /* header stays on top while scrolling */
+      top: 0;
+      background: #fff;
+      color: var(--mut);
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    td.n, th.n { text-align: right; }     /* number columns */
+
+    /* ---------- 1.12 Map ---------- */
+    #mapw { position: relative; }         /* parent for the buttons/legend on the map */
+    #map {
+      width: 100%;
+      height: 660px;                      /* map height: change here */
+      border-radius: 6px;
+      background: #eef2ee;
+      z-index: 0;
+    }
+    #zoom {                               /* "fit to sites" button, top right */
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+    }
+    #zoom button { width: 32px; padding: 5px; background: #fff; }
+    #legend {                             /* legend box, bottom left */
+      position: absolute;
+      left: 10px;
+      bottom: 24px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, .93);
+      border: 1px solid var(--bd);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: .72rem;
+      max-width: 230px;
+    }
+    #legend i {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+    .leaflet-tooltip { font: 12px/1.4 "Segoe UI", Arial, sans-serif; }   /* hover popup text */
+
+    /* ---------- 1.13 Messages (loading / errors) ---------- */
+    .msg {
+      background: #fff;
+      border: 1px solid var(--bd);
+      border-radius: 8px;
+      padding: 30px;
+      color: var(--mut);
+      line-height: 1.7;
+    }
+    .msg code {
+      background: var(--in);
+      border: 1px solid var(--bd);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: var(--tx);
+    }
+    .foot { font-size: .72rem; color: var(--mut); }
+
+    /* ---------- 1.14 Small screens: stack everything in one column ---------- */
+    @media (max-width: 1150px) {
+      #app { grid-template-columns: 1fr; }
+      aside { height: auto; position: static; }
+      .g3, .g2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+
+
+<body>
+<!-- =================================================================
+     PART 2: HTML  (what is on the page)
+     Each element has an id. JavaScript finds elements by that id.
+     ================================================================= -->
+<div id="app">
+
+  <!-- ---------------- 2.1 LEFT SIDEBAR ---------------- -->
+  <aside>
+
+    <!-- Filters -->
+    <div class="sec">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <h3 style="margin:0">Filters</h3>
+        <button id="reset">Reset</button>
+      </div>
+
+      <!-- JavaScript fills this with checkbox groups (Protected Area, etc.) -->
+      <div id="filters" style="margin-top:10px"></div>
+
+      <label class="f">Site area (ha)</label>
+      <div class="two">
+        <input type="number" id="amin" placeholder="Min" step="any">
+        <input type="number" id="amax" placeholder="Max" step="any">
+      </div>
+    </div>
+
+    <!-- Display options -->
+    <div class="sec">
+      <h3>Display</h3>
+
+      <label class="f">Restoration target (ha), 0 = off</label>
+      <input type="number" id="target" value="0" min="0" step="100">
+
+      <label class="f">Colour map by</label>
+      <!-- value = column name in data.csv, text = what the user sees -->
+      <select id="colorby">
+        <option value="Area_Hectares">Area (ha)</option>
+        <option value="Trees_Planted">Trees planted</option>
+        <option value="Province">Province</option>
+        <option value="PA">Protected area</option>
+        <option value="Management_Zone">Management zone</option>
+        <option value="Target_Species">Target species</option>
+      </select>
+
+      <label class="f">Basemap</label>
+      <!-- value must match a key in the BASES list in the JavaScript -->
+      <select id="base">
+        <option value="light">Light gray (Esri)</option>
+        <option value="osm">OpenStreetMap</option>
+        <option value="sat">Satellite (Esri)</option>
+        <option value="dark">Dark gray (Esri)</option>
+        <option value="none">None</option>
+      </select>
+
+      <label class="f" style="display:flex; gap:6px; align-items:center; margin-top:12px">
+        <input type="checkbox" id="bnd" checked> Show PA boundary
+      </label>
+      <div class="foot" id="bndmsg"></div>
+    </div>
+
+    <p class="foot" id="srcinfo"></p>
+  </aside>
+
+
+  <!-- ---------------- 2.2 MAIN CONTENT ---------------- -->
+  <main>
+
+    <!-- Title bar -->
+    <div class="top">
+      <div>
+        <div class="t">EPL Forest Restoration Monitoring Dashboard</div>
+        <div class="s" id="sub">Restoration sites, planting progress and species targets</div>
+      </div>
+      <div class="d" id="dt"></div>   <!-- date and time, filled by JavaScript -->
+    </div>
+
+    <div class="body">
+
+      <!-- Messages: only one of these shows at a time -->
+      <div id="empty" class="msg">Loading data.csv ...</div>
+      <div id="nomatch" class="msg" hidden>No sites match the current filters. Adjust or reset the filters.</div>
+
+      <!-- The dashboard itself (hidden until data is loaded) -->
+      <div id="dash" hidden>
+
+        <div id="chips"></div>        <!-- active filter pills -->
+
+        <!-- Top row: 3 columns -->
+        <div class="g3">
+
+          <!-- Left column -->
+          <div>
+            <div class="card">
+              <div class="ct">Overall Progress</div>
+              <div id="donut" style="text-align:center"></div>
+            </div>
+            <div class="card">
+              <div class="ct">Restoration Focus Areas</div>
+              <div id="focus"></div>
+            </div>
+          </div>
+
+          <!-- Middle column: the MAP -->
+          <div class="card">
+            <div class="ct">Restoration Site Map</div>
+            <div id="mapw">
+              <div id="map"></div>
+              <div id="zoom"><button id="zf" title="Fit to sites">&#9974;</button></div>
+              <div id="legend"></div>
+            </div>
+          </div>
+
+          <!-- Right column -->
+          <div>
+            <div class="card">
+              <div class="ct">Trees Planted by Management Zone</div>
+              <div id="zone"></div>
+            </div>
+            <div class="card">
+              <div class="ct">Largest Sites</div>
+              <div id="top"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom row: 2 columns -->
+        <div class="g2">
+          <div class="card">
+            <div class="ct">Restored Area by Target Species (ha)</div>
+            <div id="species"></div>
+          </div>
+          <div class="card">
+            <div class="ct">Summary by Protected Area</div>
+            <div class="tw" id="sum"></div>
+          </div>
+        </div>
+
+        <div class="foot" id="foot"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+
+<!-- =================================================================
+     PART 3: JAVASCRIPT  (the brain)
+
+     How the program flows:
+       1. Load data.csv                  (SECTION C)
+       2. Turn it into a list of sites   (SECTION C)
+       3. Apply the user's filters       (SECTION D)
+       4. Draw charts, table and map     (SECTIONS E, F, H)
+       5. When the user clicks something, repeat from step 3
+     ================================================================= -->
+<script>
+
+/* =================================================================
+   SECTION A: SETTINGS  (easy things you may want to change)
+   ================================================================= */
+
+// Name of the data file
+const DATA_FILE = "data.csv";
+
+// Columns that data.csv MUST have (names must match exactly)
+const REQUIRED_COLUMNS = [
+  "Site_Name", "Province", "PA", "CPA", "Management_Zone",
+  "Area_Hectares", "Trees_Planted", "Target_Species",
+  "Latitude", "Longitude"
+];
+
+// Columns used for the checkbox filters in the sidebar
+const FILTER_COLUMNS = ["PA", "CPA", "Management_Zone", "Target_Species"];
+
+// Nice names shown for each filter
+const FILTER_LABELS = {
+  PA: "Protected Area",
+  CPA: "Community PA",
+  Management_Zone: "Management Zone",
+  Target_Species: "Target Species"
+};
+
+// Colors for charts and categories (used one after another)
+const PALETTE = ["#0b6b3a", "#7ab648", "#f2b134", "#2f7fb5", "#c0562b", "#6f8f9c", "#8a6bb0", "#a3a3a3"];
+
+// Colors for the number scale on the map (light yellow -> dark green)
+const COLOR_SCALE = ["#f2e394", "#9bcf6b", "#2e9e5b", "#0b4f2c"];
+
+
+/* =================================================================
+   SECTION B: SMALL HELPER FUNCTIONS
+   ================================================================= */
+
+// Short way to find an element by id.  $("map") = document.getElementById("map")
+const $ = id => document.getElementById(id);
+
+// Format a number with commas.  fmt(1234.5, 1) -> "1,234.5"
+function fmt(number, decimals = 0) {
+  return Number(number).toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+}
+
+// Make text safe to put inside HTML (stops < > & " from breaking the page)
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, character => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;"
+  }[character]));
+}
+
+// Global variables (shared by all functions)
+let DATA = [];                       // ALL sites read from data.csv
+let CUR = [];                        // CURRENT sites (after filters are applied)
+let AREA_RANGE = [null, null];       // [min, max] area typed by the user
+let FILTERS = {};                    // selected checkboxes, e.g. FILTERS.PA = Set of names
+FILTER_COLUMNS.forEach(column => FILTERS[column] = new Set());
+
+
+/* =================================================================
+   SECTION C: LOADING DATA FROM data.csv
+   ================================================================= */
+
+/* ---- C1. Read CSV text and split it into rows and cells ----
+   Input : the whole file as one text
+   Output: a list of rows, each row is a list of cell texts
+   It handles quotes ("a,b") and detects comma or semicolon separators. */
+function parseCSV(text) {
+  // Look at the first line: more ";" than ","? then the separator is ";"
+  const firstLine = text.split(/\r?\n/)[0];
+  const semicolons = (firstLine.match(/;/g) || []).length;
+  const commas = (firstLine.match(/,/g) || []).length;
+  const separator = semicolons > commas ? ";" : ",";
+
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let insideQuotes = false;
+
+  // Walk through the text one character at a time
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+
+    if (insideQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }   // "" means a real quote
+        else insideQuotes = false;                        // closing quote
+      } else {
+        cell += c;
+      }
+    } else if (c === '"') {
+      insideQuotes = true;                                // opening quote
+    } else if (c === separator) {
+      row.push(cell); cell = "";                          // end of cell
+    } else if (c === "\n") {
+      row.push(cell); rows.push(row);                     // end of row
+      row = []; cell = "";
+    } else if (c !== "\r") {
+      cell += c;                                          // normal character
+    }
+  }
+
+  // Add the last row (if the file does not end with a new line)
+  if (cell !== "" || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  // Remove completely empty rows
+  return rows.filter(r => r.some(value => value.trim() !== ""));
+}
+
+/* ---- C2. Convert CSV text into the DATA list of sites ----
+   keepView = true  -> just refresh (used by auto-reload)
+   keepView = false -> reset filters (first load) */
+function ingest(text, keepView) {
+  const rows = parseCSV(text.replace(/^\uFEFF/, ""));   // remove hidden BOM character
+
+  // First row = headers. Make them lowercase, spaces -> "_"
+  const headers = rows.shift().map(h => h.trim().toLowerCase().replace(/[\s-]+/g, "_"));
+
+  // Find the column number of each required column
+  const columnIndex = {};
+  REQUIRED_COLUMNS.forEach(name => columnIndex[name] = headers.indexOf(name.toLowerCase()));
+
+  // Stop if any required column is missing
+  const missing = REQUIRED_COLUMNS.filter(name => columnIndex[name] < 0);
+  if (missing.length) {
+    showError(`data.csv is missing column(s): <code>${missing.join("</code> <code>")}</code>`);
+    return;
+  }
+
+  // Turn every row into an object like { Site_Name: "Site 01", Area_Hectares: 48, ... }
+  DATA = rows.map(row => {
+    const site = {};
+    REQUIRED_COLUMNS.forEach(name => site[name] = (row[columnIndex[name]] || "").trim());
+
+    // These columns must be numbers (remove commas like "1,200")
+    ["Area_Hectares", "Trees_Planted", "Latitude", "Longitude"].forEach(name => {
+      site[name] = parseFloat(String(site[name]).replace(/,/g, ""));
+    });
+
+    // Empty text columns become "Unspecified"
+    ["Site_Name", "Province", "PA", "CPA", "Management_Zone", "Target_Species"].forEach(name => {
+      if (!site[name]) site[name] = "Unspecified";
+    });
+
+    // Empty trees count becomes 0
+    if (isNaN(site.Trees_Planted)) site.Trees_Planted = 0;
+    return site;
+  })
+  // Keep only rows with valid coordinates and area
+  .filter(s =>
+    isFinite(s.Latitude) && isFinite(s.Longitude) && isFinite(s.Area_Hectares) &&
+    Math.abs(s.Latitude) <= 90 && Math.abs(s.Longitude) <= 180
+  );
+
+  if (!DATA.length) {
+    showError("data.csv has no valid rows (check Latitude, Longitude and Area_Hectares).");
+    return;
+  }
+
+  if (keepView) update(true);
+  else resetAll();
+}
+
+/* ---- C3. Show an error message instead of the dashboard ---- */
+function showError(html) {
+  $("empty").hidden = false;
+  $("dash").hidden = true;
+  $("empty").innerHTML = html;
+}
+
+/* ---- C4. Load data.csv from the same folder (and re-check every 30 s) ---- */
+let LAST_TEXT = "";          // last file content (to detect changes)
+let FALLBACK_SHOWN = false;  // did we already show the "select file" help?
+
+function load() {
+  return fetch(DATA_FILE + "?t=" + Date.now(), { cache: "no-store" })
+    .then(response => {
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.text();
+    })
+    .then(text => {
+      if (text !== LAST_TEXT) {              // only update if the file changed
+        const firstTime = !LAST_TEXT;
+        LAST_TEXT = text;
+        ingest(text, !firstTime);
+      }
+    })
+    .catch(() => {
+      // Could not read the file (usually because the page was opened by double-click)
+      if (!LAST_TEXT && !FALLBACK_SHOWN) {
+        FALLBACK_SHOWN = true;
+        showFilePicker();
+      }
+    });
+}
+
+/* ---- C5. Backup way: let the user pick data.csv once ----
+   The browser remembers the file (in IndexedDB) and re-reads it every 15 s. */
+
+// Open the small browser database
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("rd", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("h");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = reject;
+  });
+}
+// Get the remembered file handle
+async function getSavedHandle() {
+  const db = await openDatabase();
+  return new Promise(resolve => {
+    const query = db.transaction("h").objectStore("h").get("csv");
+    query.onsuccess = () => resolve(query.result);
+    query.onerror = () => resolve();
+  });
+}
+// Save the file handle for next time
+async function saveHandle(handle) {
+  const db = await openDatabase();
+  db.transaction("h", "readwrite").objectStore("h").put(handle, "csv");
+}
+// Read the file from the handle, and keep re-reading it
+async function readFromHandle(handle) {
+  try {
+    // Ask permission if needed
+    const allowed = await handle.queryPermission({ mode: "read" }) === "granted"
+                 || await handle.requestPermission({ mode: "read" }) === "granted";
+    if (!allowed) return;
+
+    const readText = async () => (await handle.getFile()).text();
+    const text = await readText();
+    LAST_TEXT = text;
+    ingest(text, false);
+
+    // Check for changes every 15 seconds
+    setInterval(async () => {
+      try {
+        const newText = await readText();
+        if (newText !== LAST_TEXT) { LAST_TEXT = newText; ingest(newText, true); }
+      } catch (e) {}
+    }, 15000);
+  } catch (e) {}
+}
+// Show the help message with the "Select data.csv" button
+async function showFilePicker() {
+  const canPick = "showOpenFilePicker" in window;   // Chrome/Edge only
+  let handle = null;
+  try { if (canPick) handle = await getSavedHandle(); } catch (e) {}
+
+  showError(`<b>Could not read <code>${DATA_FILE}</code> automatically.</b><br>Browsers block this when a page is opened by double-click. Choose one:<br>
+   1. Start the dashboard with <code>start_dashboard.bat</code> (Windows) or <code>start_dashboard.sh</code> (Mac/Linux) from this folder.<br>
+   2. ${canPick
+        ? `Link your file once: <button id="pick">${handle ? "Reload linked data.csv" : "Select data.csv (one time)"}</button>`
+        : "Open this page in Chrome or Edge to link the file once."}<br>
+   Required columns: ${REQUIRED_COLUMNS.join(", ")}.`);
+
+  if (canPick) {
+    $("pick").onclick = async () => {
+      try {
+        if (!handle) {
+          [handle] = await showOpenFilePicker({ types: [{ accept: { "text/csv": [".csv"] } }] });
+          await saveHandle(handle);
+        }
+        readFromHandle(handle);
+      } catch (e) {}
+    };
+  }
+}
+
+
+/* =================================================================
+   SECTION D: FILTERS
+   ================================================================= */
+
+/* ---- D1. Sites that pass the checkbox filters ----
+   "upTo" = only use the first N filters.
+   Used so each filter list only shows options that still exist. */
+function applyCheckboxFilters(upTo) {
+  return DATA.filter(site =>
+    FILTER_COLUMNS.every((column, i) =>
+      i >= upTo ||                          // skip filters after "upTo"
+      !FILTERS[column].size ||              // nothing ticked = accept all
+      FILTERS[column].has(site[column])     // ticked = must match
+    )
+  );
+}
+
+/* ---- D2. Sites that pass ALL filters (checkboxes + area min/max) ---- */
+function getFilteredSites() {
+  return applyCheckboxFilters(FILTER_COLUMNS.length).filter(site =>
+    (AREA_RANGE[0] == null || site.Area_Hectares >= AREA_RANGE[0]) &&
+    (AREA_RANGE[1] == null || site.Area_Hectares <= AREA_RANGE[1])
+  );
+}
+
+/* ---- D3. Clear every filter ---- */
+function resetAll() {
+  FILTER_COLUMNS.forEach(column => FILTERS[column].clear());
+  AREA_RANGE = [null, null];
+  $("amin").value = "";
+  $("amax").value = "";
+  update(true);
+}
+
+/* ---- D4. Draw the checkbox groups in the sidebar ---- */
+function renderFilters() {
+  const box = $("filters");
+
+  // Remember which groups are open, so they stay open after redrawing
+  const openGroups = new Set([...box.querySelectorAll("details[open]")].map(d => d.dataset.k));
+  box.innerHTML = "";
+
+  FILTER_COLUMNS.forEach((column, i) => {
+    // Options = unique values, based on the filters ABOVE this one
+    const options = [...new Set(applyCheckboxFilters(i).map(site => site[column]))].sort();
+
+    // Remove ticks that are no longer available
+    FILTERS[column] = new Set([...FILTERS[column]].filter(v => options.includes(v)));
+
+    // Group box (open by default: the first two)
+    const group = document.createElement("details");
+    group.dataset.k = column;
+    group.open = openGroups.has(column) || (!openGroups.size && i < 2);
+    group.innerHTML = `<summary>${FILTER_LABELS[column]}${FILTERS[column].size ? ` (${FILTERS[column].size})` : ""}</summary>`;
+
+    // List of checkboxes
+    const list = document.createElement("div");
+    list.className = "opts";
+    options.forEach(value => {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = FILTERS[column].has(value);
+      checkbox.onchange = () => {
+        if (checkbox.checked) FILTERS[column].add(value);
+        else FILTERS[column].delete(value);
+        update(true);                        // redraw everything
+      };
+      label.append(checkbox, " " + value);
+      list.append(label);
+    });
+
+    group.append(list);
+    box.append(group);
+  });
+}
+
+
+/* =================================================================
+   SECTION E: SMALL CHARTS  (bars and donut, drawn with plain HTML/SVG)
+   ================================================================= */
+
+/* ---- E1. Group sites and add up a number ----
+   Example: groupSum(sites, "Province", "Area_Hectares")
+            -> [ {k:"Mondulkiri", v:751.4} ]  (biggest first)
+   If valueColumn is empty, it just counts sites. */
+function groupSum(sites, groupColumn, valueColumn) {
+  const totals = new Map();
+  sites.forEach(site => {
+    const key = site[groupColumn];
+    const add = valueColumn ? site[valueColumn] : 1;
+    totals.set(key, (totals.get(key) || 0) + add);
+  });
+  return [...totals]
+    .map(([k, v]) => ({ k, v }))
+    .sort((a, b) => b.v - a.v);
+}
+
+/* ---- E2. Horizontal bars ----
+   items = [{k: name, v: number}],  formatValue = how to write the number */
+function drawHorizontalBars(element, items, formatValue) {
+  const biggest = Math.max(...items.map(x => x.v), 1e-9);
+  element.innerHTML = items.map((item, i) => `
+    <div class="hb">
+      <div class="hl"><span>${esc(item.k)}</span><b>${formatValue(item.v)}</b></div>
+      <div class="ht"><div style="width:${item.v / biggest * 100}%; background:${PALETTE[i % 8]}"></div></div>
+    </div>`).join("");
+}
+
+/* ---- E3. Donut chart (a circle drawn in SVG, cut into colored arcs) ---- */
+function drawDonut(element, items, centerBig, centerSmall) {
+  const total = items.reduce((sum, x) => sum + x.v, 0) || 1;
+  const radius = 70;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
+  let svg = `<svg viewBox="0 0 200 200" width="190" height="190"><g transform="rotate(-90 100 100)">`;
+  items.forEach((item, i) => {
+    const arcLength = item.v / total * circumference;
+    svg += `<circle cx="100" cy="100" r="${radius}" fill="none" stroke="${PALETTE[i % 8]}" stroke-width="22"
+             stroke-dasharray="${arcLength} ${circumference - arcLength}" stroke-dashoffset="${-offset}"/>`;
+    offset += arcLength;
+  });
+  svg += `</g>
+    <text x="100" y="102" text-anchor="middle" fill="#26332b" font-size="24" font-weight="700">${centerBig}</text>
+    <text x="100" y="121" text-anchor="middle" fill="#6b7a70" font-size="11">${centerSmall}</text>
+  </svg>`;
+
+  // Legend under the donut
+  svg += `<div class="leg">` +
+    items.map((item, i) => `<span><i style="background:${PALETTE[i % 8]}"></i>${esc(item.k)}</span>`).join("") +
+    `</div>`;
+
+  element.innerHTML = svg;
+}
+
+
+/* =================================================================
+   SECTION F: THE MAP  (Leaflet)
+   ================================================================= */
+
+/* ---- F1. Color helpers ---- */
+
+// "#0b6b3a" -> [11, 107, 58]
+function hexToRgb(hex) {
+  return [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+}
+
+// Number between 0 and 1 -> a color on the COLOR_SCALE
+// 0 = first color (light), 1 = last color (dark)
+function colorFromScale(t) {
+  const steps = COLOR_SCALE.length - 1;
+  const i = Math.min(steps - 1, Math.floor(t * steps));   // which two colors are we between?
+  const fraction = t * steps - i;                          // how far between them (0..1)
+  const from = hexToRgb(COLOR_SCALE[i]);
+  const to = hexToRgb(COLOR_SCALE[i + 1]);
+  const mixed = from.map((value, j) => Math.round(value + (to[j] - value) * fraction));
+  return `rgb(${mixed.join(",")})`;
+}
+
+/* ---- F2. Basemap list ----
+   u = tile URL,  o = options.
+   The word in front (light, dark, osm, sat) must match the <option> values in the HTML. */
+const BASES = {
+  light: {
+    u: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    o: { maxZoom: 16, attribution: "Tiles &copy; Esri" }
+  },
+  dark: {
+    u: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    o: { maxZoom: 16, attribution: "Tiles &copy; Esri" }
+  },
+  osm: {
+    u: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    o: { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }
+  },
+  sat: {
+    u: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    o: { maxZoom: 19, attribution: "Tiles &copy; Esri" }
+  }
+};
+
+// If a basemap fails to load, try these in order
+const FALLBACK_BASES = ["light", "sat", "osm"];
+
+// Map variables
+let map = null;              // the Leaflet map
+let baseLayer = null;        // the current basemap layer
+let CURRENT_BASE = "";       // name of the current basemap
+let markers = null;          // group holding all site circles
+let tileErrors = 0;          // count of failed tiles
+let triedBases = new Set();  // basemaps already tried
+
+/* ---- F3. Create the map (runs once) ---- */
+function initMap() {
+  map = L.map("map", {
+    preferCanvas: true,       // draw circles on canvas = faster
+    zoomSnap: 0.25,           // allows zoom levels like 7.25
+    worldCopyJump: true
+  }).setView([12.5, 104.9], 7);   // starting view: [latitude, longitude], zoom
+
+  // A special layer level for the boundary (below the site circles)
+  map.createPane("bnd").style.zIndex = 350;
+
+  markers = L.layerGroup().addTo(map);
+}
+
+/* ---- F4. Change the basemap ---- */
+function setBase(name) {
+  if (name === CURRENT_BASE) return;     // already using it
+  CURRENT_BASE = name;
+  tileErrors = 0;
+
+  // Remove old basemap
+  if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
+
+  // Background color behind the tiles
+  $("map").style.background = name === "dark" ? "#1a1f26" : "#eef2ee";
+
+  if (name === "none") return;           // no basemap wanted
+
+  triedBases.add(name);
+  baseLayer = L.tileLayer(BASES[name].u, BASES[name].o).addTo(map);
+
+  // If many tiles fail, automatically switch to another basemap
+  baseLayer.on("tileerror", () => {
+    tileErrors++;
+    if (tileErrors < 6) return;
+    const next = FALLBACK_BASES.find(key => !triedBases.has(key));
+    if (next) {
+      $("base").value = next;
+      CURRENT_BASE = "";
+      setBase(next);
+    }
+  });
+}
+
+/* ---- F5. Zoom the map to show all given sites ---- */
+function fitMap(sites) {
+  if (!sites.length || !map) return;
+  const points = sites.map(s => [s.Latitude, s.Longitude]);
+  map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 14 });
+}
+
+/* ---- F6. Draw everything on the map ----
+   fit = true  -> also zoom to the sites */
+function drawMap(fit) {
+  if (!map) initMap();
+  map.invalidateSize();                 // fix size if the container changed
+  setBase($("base").value);
+  markers.clearLayers();                // remove old circles
+
+  // What is the colour based on?
+  const colorBy = $("colorby").value;
+  const isNumber = colorBy === "Area_Hectares" || colorBy === "Trees_Planted";
+
+  // For numbers: find min and max (for the color scale)
+  const values = CUR.map(s => s[colorBy]);
+  const minValue = isNumber ? Math.min(...values) : 0;
+  const maxValue = isNumber ? Math.max(...values) : 1;
+
+  // For text (Province, PA...): one color per unique value
+  const categories = isNumber ? [] : [...new Set(DATA.map(s => s[colorBy]))].sort();
+
+  // Biggest area (to scale circle sizes)
+  const maxArea = Math.max(...CUR.map(s => s.Area_Hectares), 1e-9);
+
+  // Draw big sites first, so small ones sit on top
+  CUR.slice().sort((a, b) => b.Area_Hectares - a.Area_Hectares).forEach(site => {
+
+    // Circle radius from 4 to 18 pixels, based on area
+    const radius = 4 + 14 * Math.sqrt(site.Area_Hectares / maxArea);
+
+    // Circle colour
+    let color;
+    if (isNumber) {
+      const t = maxValue > minValue ? (site[colorBy] - minValue) / (maxValue - minValue) : 0.5;
+      color = colorFromScale(t);
+    } else {
+      color = PALETTE[categories.indexOf(site[colorBy]) % 8];
+    }
+
+    // Text shown when hovering
+    const tooltip =
+      `<b>${esc(site.Site_Name)}</b><br>` +
+      `${esc(site.Province)} | ${esc(site.PA)} | ${esc(site.CPA)}<br>` +
+      `${esc(site.Management_Zone)} | ${esc(site.Target_Species)}<br>` +
+      `${fmt(site.Area_Hectares, 1)} ha | ${fmt(site.Trees_Planted)} trees<br>` +
+      `${site.Latitude.toFixed(5)}, ${site.Longitude.toFixed(5)}`;
+
+    L.circleMarker([site.Latitude, site.Longitude], {
+      radius: radius,
+      color: "#fff",            // white outline
+      weight: 1.5,
+      fillColor: color,
+      fillOpacity: 0.8
+    })
+    .bindTooltip(tooltip, { sticky: true })
+    .addTo(markers);
+  });
+
+  if (fit) fitMap(CUR);
+  showBoundary();
+
+  // ----- Legend (box at the bottom left of the map) -----
+  if (isNumber) {
+    // A gradient bar with min and max
+    $("legend").innerHTML =
+      `<div><b>${colorBy === "Area_Hectares" ? "Area (ha)" : "Trees planted"}</b></div>` +
+      `<div style="height:8px; border-radius:4px; margin:5px 0; background:linear-gradient(90deg,${COLOR_SCALE.join(",")})"></div>` +
+      `<div style="display:flex; justify-content:space-between"><span>${fmt(minValue, 1)}</span><span>${fmt(maxValue, 1)}</span></div>`;
+  } else {
+    // A list of colored dots (max 10)
+    $("legend").innerHTML = categories
+      .filter(c => CUR.some(s => s[colorBy] == c))
+      .slice(0, 10)
+      .map(c => `<div><i style="background:${PALETTE[categories.indexOf(c) % 8]}"></i>${esc(c)}</div>`)
+      .join("");
+  }
+
+  // Add the boundary line to the legend (if visible)
+  if (BOUNDARY_DATA && $("bnd").checked) {
+    $("legend").innerHTML +=
+      `<div style="margin-top:5px"><span style="display:inline-block; width:18px; border-top:2.5px dashed #e8a317; vertical-align:middle; margin-right:5px"></span>PA boundary</div>`;
+  }
+}
+
+
+/* =================================================================
+   SECTION G: PA BOUNDARY  (GeoJSON file)
+   ================================================================= */
+
+const BOUNDARY_FILE = "SWS and PPWS Shapefile_updated.geojson";
+let BOUNDARY_DATA = null;     // the GeoJSON content
+let boundaryLayer = null;     // the boundary drawn on the map
+
+/* ---- G1. Draw (or remove) the boundary on the map ---- */
+function showBoundary() {
+  if (!map) return;
+
+  // Remove the old one first
+  if (boundaryLayer) { map.removeLayer(boundaryLayer); boundaryLayer = null; }
+
+  // Nothing to draw if no file loaded or the checkbox is off
+  if (!BOUNDARY_DATA || !$("bnd").checked) return;
+
+  boundaryLayer = L.geoJSON(BOUNDARY_DATA, {
+    pane: "bnd",              // below the site circles
+    interactive: false,       // ignore mouse (so circles' hover still works)
+    style: {
+      color: "#e8a317",       // line colour (amber)
+      weight: 2.5,            // line thickness
+      dashArray: "7 4",       // dashed line
+      fillColor: "#e8a317",
+      fillOpacity: 0.06       // very light fill
+    }
+  }).addTo(map);
+}
+
+/* ---- G2. Redraw map (used after boundary loads or checkbox changes) ---- */
+function redrawBoundary() {
+  if (map && CUR.length) drawMap(false);
+  else showBoundary();
+}
+
+/* ---- G3. Save loaded GeoJSON and show it ---- */
+function setBoundary(geojson) {
+  BOUNDARY_DATA = geojson;
+  const count = (geojson.features || [geojson]).length;
+  $("bndmsg").textContent = "Boundary: " + count + " feature(s) loaded";
+  redrawBoundary();
+}
+
+/* ---- G4. Load the GeoJSON file from the same folder ---- */
+function loadBoundary() {
+  fetch(encodeURI(BOUNDARY_FILE), { cache: "no-store" })
+    .then(response => {
+      if (!response.ok) throw 0;
+      return response.json();
+    })
+    .then(setBoundary)
+    .catch(() => {
+      // Could not read automatically -> show a file picker in the sidebar
+      $("bndmsg").innerHTML =
+        'Could not read the boundary file automatically. Select it: <input type="file" id="bfile" accept=".geojson,.json">';
+
+      $("bfile").onchange = event => {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try { setBoundary(JSON.parse(reader.result)); }
+          catch (e) { $("bndmsg").textContent = "Invalid GeoJSON file"; }
+        };
+        reader.readAsText(file);
+      };
+    });
+}
+
+
+/* =================================================================
+   SECTION H: UPDATE  (redraw the whole dashboard)
+   Called every time data or filters change.
+   ================================================================= */
+function update(fit) {
+
+  // 1. Refresh the filter lists
+  renderFilters();
+
+  // 2. Show the current date/time (UTC) at the top right
+  const now = new Date();
+  $("dt").innerHTML =
+    `${now.getUTCDate()} ${now.toLocaleString("en", { month: "short", timeZone: "UTC" })} ${now.getUTCFullYear()}<br>` +
+    `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")} UTC`;
+
+  // 3. Stop here if there is no data yet
+  if (DATA.length === 0) return;
+
+  $("empty").hidden = true;
+  $("srcinfo").textContent = `Source: ${DATA_FILE} | ${fmt(DATA.length)} valid records`;
+
+  // 4. Get the sites that match the filters
+  const sites = getFilteredSites();
+  CUR = sites;
+
+  // 5. No match? show a message and stop
+  $("nomatch").hidden = sites.length > 0;
+  $("dash").hidden = sites.length === 0;
+  if (sites.length === 0) return;
+
+  // 6. Totals
+  const totalArea = sites.reduce((sum, s) => sum + s.Area_Hectares, 0);
+  const totalTrees = sites.reduce((sum, s) => sum + s.Trees_Planted, 0);
+  const target = +$("target").value || 0;
+
+  // 7. Active-filter pills ("All records" if none)
+  const activeFilters = FILTER_COLUMNS
+    .filter(column => FILTERS[column].size)
+    .map(column => {
+      const chosen = FILTERS[column];
+      const text = chosen.size < 3 ? [...chosen].join(", ") : chosen.size + " selected";
+      return `${FILTER_LABELS[column]}: ${text}`;
+    });
+  if (AREA_RANGE[0] != null || AREA_RANGE[1] != null) {
+    activeFilters.push(`Area: ${AREA_RANGE[0] ?? "min"} to ${AREA_RANGE[1] ?? "max"} ha`);
+  }
+  $("chips").innerHTML = (activeFilters.length ? activeFilters : ["All records"])
+    .map(text => `<span class="chip">${esc(text)}</span>`)
+    .join("");
+
+  // 8. Donut: area by management zone. Center = % of target, or total hectares
+  drawDonut(
+    $("donut"),
+    groupSum(sites, "Management_Zone", "Area_Hectares"),
+    target > 0 ? Math.round(totalArea / target * 100) + "%" : fmt(totalArea),
+    target > 0 ? "of target" : "hectares restored"
+  );
+
+  // 9. Bars: area by province (max 8)
+  drawHorizontalBars(
+    $("focus"),
+    groupSum(sites, "Province", "Area_Hectares").slice(0, 8),
+    value => `${fmt(value, 1)} ha (${Math.round(value / totalArea * 100)}%)`
+  );
+
+  // 10. Vertical bars: trees planted by management zone
+  const zones = groupSum(sites, "Management_Zone", "Trees_Planted");
+  const biggestZone = Math.max(...zones.map(z => z.v), 1);
+  $("zone").innerHTML = `<div class="vb">` + zones.map((zone, i) => `
+    <div class="vc">
+      <div class="vv">${Math.round(zone.v / (totalTrees || 1) * 100)}%</div>
+      <div class="vbar" style="height:${zone.v / biggestZone * 150}px; background:${PALETTE[i % 8]}"></div>
+      <div class="vl" title="${esc(zone.k)}">${esc(zone.k)}</div>
+    </div>`).join("") + `</div>`;
+
+  // 11. Top 5 largest sites
+  $("top").innerHTML = sites.slice()
+    .sort((a, b) => b.Area_Hectares - a.Area_Hectares)
+    .slice(0, 5)
+    .map((site, i) => `
+      <div class="row" style="border-left-color:${PALETTE[i % 8]}">
+        <div><b>${esc(site.Site_Name)}</b></div>
+        <div class="m">${esc(site.PA)} | ${fmt(site.Area_Hectares, 1)} ha | ${fmt(site.Trees_Planted)} trees</div>
+      </div>`).join("");
+
+  // 12. Bars: area by target species (max 10)
+  drawHorizontalBars(
+    $("species"),
+    groupSum(sites, "Target_Species", "Area_Hectares").slice(0, 10),
+    value => fmt(value, 1)
+  );
+
+  // 13. Summary table: one row per Province + Protected Area
+  const summary = new Map();
+  sites.forEach(site => {
+    const key = site.Province + "\u0001" + site.PA;
+    const row = summary.get(key) || { province: site.Province, pa: site.PA, count: 0, area: 0, trees: 0 };
+    row.count++;
+    row.area += site.Area_Hectares;
+    row.trees += site.Trees_Planted;
+    summary.set(key, row);
+  });
+  $("sum").innerHTML =
+    `<table>
+       <tr><th>Province</th><th>PA</th><th class="n">Sites</th><th class="n">Area (ha)</th><th class="n">Trees</th><th class="n">Trees/ha</th></tr>` +
+    [...summary.values()]
+      .sort((a, b) => b.area - a.area)
+      .map(r => `
+       <tr>
+         <td>${esc(r.province)}</td><td>${esc(r.pa)}</td>
+         <td class="n">${r.count}</td>
+         <td class="n">${fmt(r.area, 1)}</td>
+         <td class="n">${fmt(r.trees)}</td>
+         <td class="n">${fmt(r.area ? r.trees / r.area : 0)}</td>
+       </tr>`).join("") +
+    `</table>`;
+
+  // 14. Footer text
+  $("foot").textContent = `${fmt(sites.length)} of ${fmt(DATA.length)} records shown | Coordinates in WGS84 (decimal degrees)`;
+
+  // 15. Finally, draw the map
+  drawMap(fit);
+}
+
+
+/* =================================================================
+   SECTION I: EVENTS  (what happens when the user clicks something)
+   ================================================================= */
+
+// Reset button
+$("reset").onclick = resetAll;
+
+// Area min / max boxes (update while typing)
+$("amin").oninput = event => {
+  AREA_RANGE[0] = event.target.value === "" ? null : +event.target.value;
+  update(true);
+};
+$("amax").oninput = event => {
+  AREA_RANGE[1] = event.target.value === "" ? null : +event.target.value;
+  update(true);
+};
+
+// Target box, basemap dropdown, colour dropdown (redraw, but keep the zoom)
+["target", "base", "colorby"].forEach(id => {
+  $(id).onchange = () => update(false);
+});
+
+// Boundary checkbox
+$("bnd").onchange = redrawBoundary;
+
+// "Fit to sites" button on the map
+$("zf").onclick = () => fitMap(CUR);
+
+// Keep the map correct when the window is resized
+window.onresize = () => { if (map) map.invalidateSize(); };
+
+
+/* =================================================================
+   SECTION J: START  (this runs when the page opens)
+   ================================================================= */
+update(false);                  // draw the empty page
+load();                         // load data.csv
+loadBoundary();                 // load the boundary GeoJSON
+setInterval(load, 30000);       // re-check data.csv every 30 seconds
+
+</script>
+</body>
+</html>
