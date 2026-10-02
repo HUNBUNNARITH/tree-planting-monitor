@@ -368,12 +368,11 @@
       <!-- value = column name in data.csv, text = what the user sees -->
       <select id="colorby">
         <option value="Area_Hectares">Area (ha)</option>
-        <option value="Trees_Planted">Trees planted</option>
-        <option value="Province">Province</option>
+        <option value="Trees_Planted">Seedlings planted</option>
         <option value="PA">Protected area</option>
         <option value="Management_Zone">Management zone</option>
-        <option value="Target_Species">Target species</option>
-      </select>
+        <option value="CPA">Community PA</option>
+        </select>
 
       <label class="f">Basemap</label>
       <!-- value must match a key in the BASES list in the JavaScript -->
@@ -387,6 +386,9 @@
 
       <label class="f" style="display:flex; gap:6px; align-items:center; margin-top:12px">
         <input type="checkbox" id="bnd" checked> Show PA boundary
+      </label>
+      <label class="f" style="display:flex; gap:6px; align-items:center; margin-top:6px">
+        <input type="checkbox" id="cpab" checked> Show CPA boundary
       </label>
       <div class="foot" id="bndmsg"></div>
     </div>
@@ -402,7 +404,7 @@
     <div class="top">
       <div>
         <div class="t">EPL Forest Restoration Monitoring Dashboard</div>
-        <div class="s" id="sub">Restoration sites, planting progress and species targets</div>
+        <div class="s" id="sub">Restoration sites, planting progress and species planted</div>
       </div>
       <div class="d" id="dt"></div>   <!-- date and time, filled by JavaScript -->
     </div>
@@ -428,7 +430,7 @@
               <div id="donut" style="text-align:center"></div>
             </div>
             <div class="card">
-              <div class="ct">Restoration Focus Areas</div>
+              <div class="ct">Area by Community PA (ha)</div>
               <div id="focus"></div>
             </div>
           </div>
@@ -446,7 +448,7 @@
           <!-- Right column -->
           <div>
             <div class="card">
-              <div class="ct">Trees Planted by Management Zone</div>
+              <div class="ct">Seedlings Planted by Management Zone</div>
               <div id="zone"></div>
             </div>
             <div class="card">
@@ -459,7 +461,7 @@
         <!-- Bottom row: 2 columns -->
         <div class="g2">
           <div class="card">
-            <div class="ct">Restored Area by Target Species (ha)</div>
+            <div class="ct">Seedlings Planted by Species</div>
             <div id="species"></div>
           </div>
           <div class="card">
@@ -494,22 +496,21 @@
 // Name of the data file
 const DATA_FILE = "data.csv";
 
-// Columns that data.csv MUST have (names must match exactly)
-const REQUIRED_COLUMNS = [
-  "Site_Name", "Province", "PA", "CPA", "Management_Zone",
-  "Area_Hectares", "Trees_Planted", "Target_Species",
-  "Latitude", "Longitude"
-];
+// Columns the dashboard needs. It also accepts the older names (in brackets in the code).
+const REQUIRED_NAMES = ["Planting site name", "PA", "PA Management Zone", "Hectare", "Seedling", "Latitude", "Longitude"];
+
+// Full names for PA codes in data.csv (unknown codes are shown as they are)
+const PA_NAMES = { SWS: "Srae Pok WS (SWS)", PPWS: "Phnom Prech WS (PPWS)" };
 
 // Columns used for the checkbox filters in the sidebar
-const FILTER_COLUMNS = ["PA", "CPA", "Management_Zone", "Target_Species"];
+const FILTER_COLUMNS = ["PA", "Management_Zone", "CPA", "Period"];
 
 // Nice names shown for each filter
 const FILTER_LABELS = {
   PA: "Protected Area",
-  CPA: "Community PA",
   Management_Zone: "Management Zone",
-  Target_Species: "Target Species"
+  CPA: "Community PA",
+  Period: "Month"
 };
 
 // Colors for charts and categories (used one after another)
@@ -606,52 +607,81 @@ function parseCSV(text) {
 }
 
 /* ---- C2. Convert CSV text into the DATA list of sites ----
-   keepView = true  -> just refresh (used by auto-reload)
-   keepView = false -> reset filters (first load) */
+   Species columns are found automatically: any column named like
+   "Genus species (Local name)". Total / Female columns are ignored. */
 function ingest(text, keepView) {
-  const rows = parseCSV(text.replace(/^\uFEFF/, ""));   // remove hidden BOM character
+  const rows = parseCSV(text.replace(/^\uFEFF/, ""));
+  const headers = rows.shift().map(h => h.trim());
+  const norm = h => h.toLowerCase().replace(/[\s_-]+/g, " ");
+  const find = (...names) => headers.findIndex(h => names.includes(norm(h)));
 
-  // First row = headers. Make them lowercase, spaces -> "_"
-  const headers = rows.shift().map(h => h.trim().toLowerCase().replace(/[\s-]+/g, "_"));
+  const col = {
+    Site_Name: find("planting site name", "site name"),
+    PA: find("pa"),
+    Management_Zone: find("pa management zone", "management zone"),
+    CPA: find("cpa name", "cpa"),
+    Area_Hectares: find("hectare", "area hectares"),
+    Trees_Planted: find("seedling", "trees planted"),
+    Latitude: find("latitude"),
+    Longitude: find("longitude"),
+    Date: find("date"), Year: find("year"), Month: find("month")
+  };
 
-  // Find the column number of each required column
-  const columnIndex = {};
-  REQUIRED_COLUMNS.forEach(name => columnIndex[name] = headers.indexOf(name.toLowerCase()));
-
-  // Stop if any required column is missing
-  const missing = REQUIRED_COLUMNS.filter(name => columnIndex[name] < 0);
+  const missing = ["Site_Name", "PA", "Management_Zone", "Area_Hectares", "Trees_Planted", "Latitude", "Longitude"]
+    .filter(k => col[k] < 0);
   if (missing.length) {
-    showError(`data.csv is missing column(s): <code>${missing.join("</code> <code>")}</code>`);
+    showError(`data.csv is missing column(s) for: <code>${missing.join("</code> <code>")}</code>`);
     return;
   }
 
-  // Turn every row into an object like { Site_Name: "Site 01", Area_Hectares: 48, ... }
+  // Species columns, e.g. "Afzelia xylocarpa (Beng)"
+  const speciesCols = headers
+    .map((h, i) => /^[A-Z][a-z]+ [a-z]+ \(/.test(h) ? i : -1)
+    .filter(i => i >= 0);
+  const speciesName = i => headers[i].includes(")") ? headers[i] : headers[i] + ")";
+
+  const num = v => parseFloat(String(v ?? "").replace(/,/g, ""));
+  const text_ = (row, k, empty) => {
+    const v = col[k] >= 0 ? (row[col[k]] || "").trim() : "";
+    return (!v || v.toUpperCase() === "N/A") ? empty : v;
+  };
+
   DATA = rows.map(row => {
-    const site = {};
-    REQUIRED_COLUMNS.forEach(name => site[name] = (row[columnIndex[name]] || "").trim());
-
-    // These columns must be numbers (remove commas like "1,200")
-    ["Area_Hectares", "Trees_Planted", "Latitude", "Longitude"].forEach(name => {
-      site[name] = parseFloat(String(site[name]).replace(/,/g, ""));
-    });
-
-    // Empty text columns become "Unspecified"
-    ["Site_Name", "Province", "PA", "CPA", "Management_Zone", "Target_Species"].forEach(name => {
-      if (!site[name]) site[name] = "Unspecified";
-    });
-
-    // Empty trees count becomes 0
+    const site = {
+      Site_Name: text_(row, "Site_Name", "Unspecified"),
+      PA: text_(row, "PA", "Unspecified"),
+      Management_Zone: text_(row, "Management_Zone", "Unspecified"),
+      CPA: text_(row, "CPA", "No CPA"),
+      Date: text_(row, "Date", ""),
+      Area_Hectares: num(row[col.Area_Hectares]),
+      Trees_Planted: num(row[col.Trees_Planted]),
+      Latitude: num(row[col.Latitude]),
+      Longitude: num(row[col.Longitude])
+    };
+    site.PA = PA_NAMES[site.PA] || site.PA;
     if (isNaN(site.Trees_Planted)) site.Trees_Planted = 0;
+
+    // Period = "July 2026" (from the Year and Month columns)
+    const y = col.Year >= 0 ? +row[col.Year] : NaN, m = col.Month >= 0 ? +row[col.Month] : NaN;
+    site.Period = (y && m >= 1 && m <= 12)
+      ? new Date(2000, m - 1, 1).toLocaleString("en", { month: "long" }) + " " + y
+      : "Unspecified";
+
+    // Seedlings per species
+    site.species = {};
+    speciesCols.forEach(i => {
+      const n = num(row[i]);
+      if (n > 0) site.species[speciesName(i)] = n;
+    });
     return site;
   })
-  // Keep only rows with valid coordinates and area
   .filter(s =>
     isFinite(s.Latitude) && isFinite(s.Longitude) && isFinite(s.Area_Hectares) &&
     Math.abs(s.Latitude) <= 90 && Math.abs(s.Longitude) <= 180
   );
 
   if (!DATA.length) {
-    showError("data.csv has no valid rows (check Latitude, Longitude and Area_Hectares).");
+    showError("data.csv has no valid rows (check Latitude, Longitude and Hectare).");
     return;
   }
 
@@ -751,7 +781,7 @@ async function showFilePicker() {
    2. ${canPick
         ? `Link your file once: <button id="pick">${handle ? "Reload linked data.csv" : "Select data.csv (one time)"}</button>`
         : "Open this page in Chrome or Edge to link the file once."}<br>
-   Required columns: ${REQUIRED_COLUMNS.join(", ")}.`);
+   Required columns: ${REQUIRED_NAMES.join(", ")}.`);
 
   if (canPick) {
     $("pick").onclick = async () => {
@@ -1052,9 +1082,10 @@ function drawMap(fit) {
     // Text shown when hovering
     const tooltip =
       `<b>${esc(site.Site_Name)}</b><br>` +
-      `${esc(site.Province)} | ${esc(site.PA)} | ${esc(site.CPA)}<br>` +
-      `${esc(site.Management_Zone)} | ${esc(site.Target_Species)}<br>` +
-      `${fmt(site.Area_Hectares, 1)} ha | ${fmt(site.Trees_Planted)} trees<br>` +
+      `${esc(site.PA)} | ${esc(site.CPA)}<br>` +
+      `${esc(site.Management_Zone)} | ${esc(site.Date)}<br>` +
+      Object.entries(site.species).map(([k, v]) => `${esc(k)}: ${fmt(v)}<br>`).join("") +
+      `${fmt(site.Area_Hectares, 1)} ha | ${fmt(site.Trees_Planted)} seedlings<br>` +
       `${site.Latitude.toFixed(5)}, ${site.Longitude.toFixed(5)}`;
 
     L.circleMarker([site.Latitude, site.Longitude], {
@@ -1086,13 +1117,18 @@ function drawMap(fit) {
       .map(c => `<div><i style="background:${PALETTE[categories.indexOf(c) % 8]}"></i>${esc(c)}</div>`)
       .join("");
   }
-
+     showCPA();
   // Add the boundary line to the legend (if visible)
   if (BOUNDARY_DATA && $("bnd").checked) {
     $("legend").innerHTML +=
       `<div style="margin-top:5px"><span style="display:inline-block; width:18px; border-top:2.5px dashed #e8a317; vertical-align:middle; margin-right:5px"></span>PA boundary</div>`;
   }
+    // Add the CPA boundary to the legend (if visible)
+  if (CPA_DATA && $("cpab").checked) {
+    $("legend").innerHTML += `<div style="margin-top:5px"><span style="display:inline-block; width:18px; border-top:2px solid #2f7fb5; vertical-align:middle; margin-right:5px"></span>CPA boundary</div>`;
+  }
 }
+
 
 
 /* =================================================================
@@ -1165,6 +1201,25 @@ function loadBoundary() {
       };
     });
 }
+   const CPA_FILE = "CPA_boundary.geojson";
+   let CPA_DATA = null, cpaLayer = null;
+
+   function showCPA() {
+     if (!map) return;
+     if (cpaLayer) { map.removeLayer(cpaLayer); cpaLayer = null; }
+     if (!CPA_DATA || !$("cpab").checked) return;
+     cpaLayer = L.geoJSON(CPA_DATA, {
+       pane: "bnd",
+       interactive: false,
+       style: { color: "#2f7fb5", weight: 2, fillColor: "#2f7fb5", fillOpacity: 0.08 }
+     }).addTo(map);
+   }
+
+   function loadCPA() {
+     fetch(encodeURI(CPA_FILE), { cache: "no-store" })
+       .then(r => { if (!r.ok) throw 0; return r.json(); })
+       .then(g => { CPA_DATA = g; showCPA(); });
+   }
 
 
 /* =================================================================
@@ -1228,7 +1283,7 @@ function update(fit) {
   // 9. Bars: area by province (max 8)
   drawHorizontalBars(
     $("focus"),
-    groupSum(sites, "Province", "Area_Hectares").slice(0, 8),
+    groupSum(sites, "CPA", "Area_Hectares").slice(0, 8),
     value => `${fmt(value, 1)} ha (${Math.round(value / totalArea * 100)}%)`
   );
 
@@ -1249,21 +1304,24 @@ function update(fit) {
     .map((site, i) => `
       <div class="row" style="border-left-color:${PALETTE[i % 8]}">
         <div><b>${esc(site.Site_Name)}</b></div>
-        <div class="m">${esc(site.PA)} | ${fmt(site.Area_Hectares, 1)} ha | ${fmt(site.Trees_Planted)} trees</div>
+        <div class="m">${esc(site.PA)} | ${fmt(site.Area_Hectares, 1)} ha | ${fmt(site.Trees_Planted)} seedlings</div>
       </div>`).join("");
 
-  // 12. Bars: area by target species (max 10)
-  drawHorizontalBars(
-    $("species"),
-    groupSum(sites, "Target_Species", "Area_Hectares").slice(0, 10),
-    value => fmt(value, 1)
-  );
+  // 12. Bars: seedlings by species
+  const speciesTotals = {};
+  sites.forEach(s => Object.entries(s.species).forEach(([k, v]) => speciesTotals[k] = (speciesTotals[k] || 0) + v));
+  const speciesItems = Object.entries(speciesTotals).map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v);
+  const speciesSum = speciesItems.reduce((sum, x) => sum + x.v, 0);
+  drawHorizontalBars($("species"), speciesItems, value => fmt(value));
+  if (speciesSum < totalTrees) {
+    $("species").innerHTML += `<div class="foot">Species recorded for ${fmt(speciesSum)} of ${fmt(totalTrees)} seedlings.</div>`;
+  }
 
-  // 13. Summary table: one row per Province + Protected Area
+  // 13. Summary table: one row per Protected Area + Zone
   const summary = new Map();
   sites.forEach(site => {
-    const key = site.Province + "\u0001" + site.PA;
-    const row = summary.get(key) || { province: site.Province, pa: site.PA, count: 0, area: 0, trees: 0 };
+    const key = site.PA + "\u0001" + site.Management_Zone;
+    const row = summary.get(key) || { province: site.PA, pa: site.Management_Zone, count: 0, area: 0, trees: 0 };
     row.count++;
     row.area += site.Area_Hectares;
     row.trees += site.Trees_Planted;
@@ -1271,7 +1329,7 @@ function update(fit) {
   });
   $("sum").innerHTML =
     `<table>
-       <tr><th>Province</th><th>PA</th><th class="n">Sites</th><th class="n">Area (ha)</th><th class="n">Trees</th><th class="n">Trees/ha</th></tr>` +
+       <tr><th>Protected Area</th><th>Zone</th><th class="n">Sites</th><th class="n">Area (ha)</th><th class="n">Seedlings</th><th class="n">Seedlings/ha</th></tr>` +
     [...summary.values()]
       .sort((a, b) => b.area - a.area)
       .map(r => `
@@ -1316,6 +1374,7 @@ $("amax").oninput = event => {
 
 // Boundary checkbox
 $("bnd").onchange = redrawBoundary;
+$("cpab").onchange = showCPA;
 
 // "Fit to sites" button on the map
 $("zf").onclick = () => fitMap(CUR);
@@ -1330,6 +1389,7 @@ window.onresize = () => { if (map) map.invalidateSize(); };
 update(false);                  // draw the empty page
 load();                         // load data.csv
 loadBoundary();                 // load the boundary GeoJSON
+loadCPA();                      // load the CPA boundary GeoJSON
 setInterval(load, 30000);       // re-check data.csv every 30 seconds
 
 </script>
